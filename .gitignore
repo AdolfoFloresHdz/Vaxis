@@ -1,0 +1,6 @@
+credenciales.json
+brave-session/
+user-data/
+__pycache__/
+*.pyc
+.env

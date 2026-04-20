@@ -1,0 +1,6 @@
+selenium
+webdriver-manager
+easyocr
+pillow
+gspread
+google-auth

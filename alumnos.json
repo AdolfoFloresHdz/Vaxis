@@ -1,0 +1,7 @@
+{
+  "alumnos": [
+    { "nombre": "Adolfo Flores Hernández", "alias": "Adolfo", "monto": 100 },
+    { "nombre": "María López García",      "alias": "María",   "monto": 100 },
+    { "nombre": "Juan Pérez Torres",       "alias": "Juan",    "monto": 100 }
+  ]
+}
