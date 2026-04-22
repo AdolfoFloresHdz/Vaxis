@@ -4,3 +4,13 @@ user-data/
 __pycache__/
 *.pyc
 .env
+
+# Imágenes (no se suben al repo)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.tiff
+*.svg

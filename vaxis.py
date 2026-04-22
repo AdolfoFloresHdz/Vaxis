@@ -22,6 +22,7 @@ print("Escanea el QR y cuando veas tus chats, presiona ENTER aquí...")
 input()
 print("¡Perfecto! Ahora VAXIS está activo. (Presiona Ctrl+C para apagarlo)")
 
+
 # ─────────────────────────────────────────────
 #  HOT RELOAD: cargamos el cerebro
 # ─────────────────────────────────────────────
