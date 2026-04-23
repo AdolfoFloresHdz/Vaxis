@@ -53,6 +53,9 @@ RESPUESTAS = [
     "Me da gusto que te interese! En un momento te confirmo disponibilidad. 📅",
 ]
 
+# Respuesta automática cuando llega un comprobante (imagen)
+RESPUESTA_COMPROBANTE = "¡Gracias por tu comprobante! En un momento lo reviso. 🧾✅"
+
 # Verificación en tiempo de carga
 assert len(ENTRADAS) == len(RESPUESTAS), "¡ENTRADAS y RESPUESTAS deben tener el mismo número de elementos!"
 
@@ -319,34 +322,56 @@ def procesar_chats(driver, chats, ya_respondidos):
             nombre = obtener_nombre_chat(driver) or "chat_desconocido"
             texto, tiene_imagen = obtener_ultimo_mensaje(driver)
 
-            if not texto:
-                if tiene_imagen:
-                    print(f"🖼️  [{nombre}] Solo imagen, sin texto — ignorando.")
-                else:
-                    print(f"⚠️  [{nombre}] No pude leer el mensaje.")
+            if not texto and not tiene_imagen:
+                print(f"⚠️  [{nombre}] No pude leer el mensaje.")
                 continue
 
-            clave = (nombre, texto)
+            clave = (nombre, texto or "__imagen__")
             if clave in ya_respondidos:
                 continue
 
-            if tiene_imagen:
-                print(f"📥 [{nombre}] Imagen con caption: \"{texto}\"")
-            else:
+            # Caso 1: solo texto
+            if texto and not tiene_imagen:
                 print(f"📥 [{nombre}] Mensaje: \"{texto}\"")
+                respuesta = buscar_respuesta(texto)
+                if respuesta:
+                    ok = enviar_respuesta(driver, respuesta)
+                    if ok:
+                        ya_respondidos.add(clave)
+                        print(f"📤 VAXIS respondió a [{nombre}]: \"{respuesta[:40]}...\" ✅")
+                    else:
+                        print(f"❌ No pude enviar respuesta a [{nombre}]")
+                else:
+                    ya_respondidos.add(clave)
+                    print(f"🤫 [{nombre}] Sin coincidencia — silencio.")
 
-            respuesta = buscar_respuesta(texto)
-
-            if respuesta:
-                ok = enviar_respuesta(driver, respuesta)
+            # Caso 2: texto + imagen (caption)
+            elif texto and tiene_imagen:
+                print(f"📥 [{nombre}] Imagen con caption: \"{texto}\"")
+                respuesta = buscar_respuesta(texto)
+                if respuesta:
+                    ok = enviar_respuesta(driver, respuesta)
+                    if ok:
+                        print(f"📤 VAXIS respondió texto a [{nombre}]: \"{respuesta[:40]}...\" ✅")
+                    else:
+                        print(f"❌ No pude enviar respuesta de texto a [{nombre}]")
+                time.sleep(0.5)
+                ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
                 if ok:
                     ya_respondidos.add(clave)
-                    print(f"📤 VAXIS respondió a [{nombre}]: \"{respuesta[:40]}...\" ✅")
+                    print(f"📤 VAXIS respondió comprobante a [{nombre}] ✅")
                 else:
-                    print(f"❌ No pude enviar respuesta a [{nombre}]")
+                    print(f"❌ No pude enviar respuesta de comprobante a [{nombre}]")
+
+            # Caso 3: solo imagen
             else:
-                ya_respondidos.add(clave)
-                print(f"🤫 [{nombre}] Sin coincidencia — silencio.")
+                print(f"🖼️  [{nombre}] Solo imagen, sin texto.")
+                ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
+                if ok:
+                    ya_respondidos.add(clave)
+                    print(f"📤 VAXIS respondió comprobante a [{nombre}] ✅")
+                else:
+                    print(f"❌ No pude enviar respuesta de comprobante a [{nombre}]")
 
             time.sleep(0.5)
             try:
