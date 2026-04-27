@@ -4,7 +4,19 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import StaleElementReferenceException
+import importlib.util
+import base64
+import os
 import time
+import vaxis_pagos
+
+# Importar vaxis-lectura (guion en el nombre requiere importlib)
+_spec = importlib.util.spec_from_file_location(
+    "vaxis_lectura",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "vaxis-lectura.py")
+)
+vaxis_lectura = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(vaxis_lectura)
 
 # ─────────────────────────────────────────────
 #  DOS LISTAS PARALELAS
@@ -61,6 +73,41 @@ assert len(ENTRADAS) == len(RESPUESTAS), "¡ENTRADAS y RESPUESTAS deben tener el
 
 
 # ─────────────────────────────────────────────
+#  DESCARGAR IMAGEN DE WHATSAPP WEB
+# ─────────────────────────────────────────────
+JS_GET_IMAGE = """
+var imgs = document.querySelectorAll('div.message-in img[src]');
+var img = imgs[imgs.length - 1];
+if (!img || !img.src) return null;
+try {
+    var c = document.createElement('canvas');
+    c.width = img.naturalWidth || img.width || 300;
+    c.height = img.naturalHeight || img.height || 300;
+    c.getContext('2d').drawImage(img, 0, 0);
+    return c.toDataURL('image/jpeg', 0.85);
+} catch(e) { return null; }
+"""
+
+def obtener_imagen_bytes(driver):
+    """Lee la imagen del chat de WhatsApp en memoria, sin guardar nada en disco."""
+    try:
+        data_url = driver.execute_script(JS_GET_IMAGE)
+        if not data_url or not data_url.startswith("data:"):
+            return None
+        _, encoded = data_url.split(",", 1)
+        return base64.b64decode(encoded)
+    except Exception as e:
+        print(f"⚠️  No pude leer imagen: {e}")
+        return None
+
+def es_comprobante(resultado):
+    """Devuelve True si el OCR encontró datos relevantes de pago."""
+    if not resultado or resultado.get("estado") == "error":
+        return False
+    return bool(resultado.get("monto") or resultado.get("fecha"))
+
+
+# ─────────────────────────────────────────────
 #  BUSCAR RESPUESTA
 # ─────────────────────────────────────────────
 def buscar_respuesta(texto):
@@ -90,39 +137,48 @@ def obtener_nombre_chat(driver):
 # ─────────────────────────────────────────────
 def obtener_ultimo_mensaje(driver):
     """
-    Intenta leer el último mensaje recibido.
-    Funciona también con imágenes que tienen caption.
+    Lee el ULTIMO mensaje entrante y detecta si tiene texto, imagen o ambos.
+    Texto e imagen se evalúan dentro del mismo elemento para no mezclar mensajes.
     Devuelve (texto, tiene_imagen).
     """
-    tiene_imagen = False
-
-    # Detectar si el último mensaje entrante tiene imagen/media
     try:
-        imagenes = driver.find_elements(
-            By.XPATH, '//div[contains(@class,"message-in")]//img[@src]'
+        mensajes = driver.find_elements(
+            By.XPATH, '//div[contains(@class,"message-in")]'
         )
-        if imagenes:
-            tiene_imagen = True
-    except Exception:
-        pass
+        if not mensajes:
+            return None, False
 
-    # Intentar leer el texto (caption o mensaje de texto puro)
-    selectores_texto = [
-        '//div[contains(@class,"message-in")]//span[contains(@class,"selectable-text")]',
-        '//div[contains(@class,"message-in")]//span[@dir="ltr"]',
-        '//div[contains(@class,"message-in")]//span[@dir="auto"]',
-    ]
-    for sel in selectores_texto:
+        ultimo = mensajes[-1]
+
+        # ¿Tiene imagen dentro?
+        tiene_imagen = False
         try:
-            elementos = driver.find_elements(By.XPATH, sel)
-            if elementos:
-                texto = elementos[-1].text.strip()
-                if texto:
-                    return texto, tiene_imagen
+            imgs = ultimo.find_elements(By.XPATH, './/img[@src]')
+            tiene_imagen = len(imgs) > 0
         except Exception:
             pass
 
-    return None, tiene_imagen
+        # ¿Tiene texto dentro?
+        texto = None
+        for sel in [
+            './/span[contains(@class,"selectable-text")]',
+            './/span[@dir="ltr"]',
+            './/span[@dir="auto"]',
+        ]:
+            try:
+                spans = ultimo.find_elements(By.XPATH, sel)
+                if spans:
+                    t = spans[-1].text.strip()
+                    if t:
+                        texto = t
+                        break
+            except Exception:
+                pass
+
+        return texto, tiene_imagen
+
+    except Exception:
+        return None, False
 
 
 # ─────────────────────────────────────────────
@@ -353,25 +409,35 @@ def procesar_chats(driver, chats, ya_respondidos):
                     ok = enviar_respuesta(driver, respuesta)
                     if ok:
                         print(f"📤 VAXIS respondió texto a [{nombre}]: \"{respuesta[:40]}...\" ✅")
-                    else:
-                        print(f"❌ No pude enviar respuesta de texto a [{nombre}]")
-                time.sleep(0.5)
-                ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
-                if ok:
-                    ya_respondidos.add(clave)
-                    print(f"📤 VAXIS respondió comprobante a [{nombre}] ✅")
+                imagen_bytes = obtener_imagen_bytes(driver)
+                texto_ocr = vaxis_lectura.leer_imagen(imagen_bytes)
+                resultado = vaxis_pagos.analizar_comprobante(texto_ocr)
+                print(f"🔍 [{nombre}] OCR: {resultado}")
+                if es_comprobante(resultado):
+                    time.sleep(0.5)
+                    ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
+                    if ok:
+                        ya_respondidos.add(clave)
+                        print(f"📤 [{nombre}] Comprobante aprobado ✅")
                 else:
-                    print(f"❌ No pude enviar respuesta de comprobante a [{nombre}]")
+                    ya_respondidos.add(clave)
+                    print(f"🖼️  [{nombre}] Imagen no es comprobante — silencio.")
 
             # Caso 3: solo imagen
             else:
                 print(f"🖼️  [{nombre}] Solo imagen, sin texto.")
-                ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
-                if ok:
-                    ya_respondidos.add(clave)
-                    print(f"📤 VAXIS respondió comprobante a [{nombre}] ✅")
+                imagen_bytes = obtener_imagen_bytes(driver)
+                texto_ocr = vaxis_lectura.leer_imagen(imagen_bytes)
+                resultado = vaxis_pagos.analizar_comprobante(texto_ocr)
+                print(f"🔍 [{nombre}] OCR: {resultado}")
+                if es_comprobante(resultado):
+                    ok = enviar_respuesta(driver, RESPUESTA_COMPROBANTE)
+                    if ok:
+                        ya_respondidos.add(clave)
+                        print(f"📤 [{nombre}] Comprobante aprobado ✅")
                 else:
-                    print(f"❌ No pude enviar respuesta de comprobante a [{nombre}]")
+                    ya_respondidos.add(clave)
+                    print(f"🖼️  [{nombre}] Imagen sin datos de pago — silencio.")
 
             time.sleep(0.5)
             try:

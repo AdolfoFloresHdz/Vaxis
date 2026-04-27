@@ -6,13 +6,6 @@ import re
 import json
 import os
 
-try:
-    import easyocr
-    _reader = None  # Se inicializa la primera vez que se usa
-    OCR_DISPONIBLE = True
-except ImportError:
-    OCR_DISPONIBLE = False
-    print("⚠️  easyocr no instalado. Corre: pip install -r requirements.txt")
 
 # ─────────────────────────────────────────────
 #  SEMANAS SEGÚN MONTO
@@ -31,24 +24,6 @@ ALUMNOS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alumnos
 def cargar_alumnos():
     with open(ALUMNOS_FILE, "r", encoding="utf-8") as f:
         return json.load(f)["alumnos"]
-
-# ─────────────────────────────────────────────
-#  EXTRAER TEXTO DE IMAGEN (OCR)
-# ─────────────────────────────────────────────
-def extraer_texto(ruta_imagen):
-    """Extrae texto de una imagen usando EasyOCR."""
-    if not OCR_DISPONIBLE:
-        return None
-    try:
-        global _reader
-        if _reader is None:
-            print("🧠 Cargando modelo OCR (solo la primera vez)...")
-            _reader = easyocr.Reader(["es", "en"], verbose=False)
-        resultados = _reader.readtext(ruta_imagen, detail=0)
-        return "\n".join(resultados)
-    except Exception as e:
-        print(f"⚠️  Error al leer imagen: {e}")
-        return None
 
 # ─────────────────────────────────────────────
 #  PARSEAR INFORMACIÓN DEL COMPROBANTE
@@ -166,18 +141,14 @@ def calcular_confianza(fecha, monto, alumno, semanas):
 # ─────────────────────────────────────────────
 #  FUNCIÓN PRINCIPAL
 # ─────────────────────────────────────────────
-def analizar_comprobante(ruta_imagen):
+def analizar_comprobante(texto):
     """
-    Analiza una imagen de comprobante de pago.
-    Devuelve un dict con los datos encontrados y el nivel de confianza.
+    Recibe el texto ya extraido por vaxis-lectura y devuelve los datos del comprobante.
     """
-    alumnos = cargar_alumnos()
-    texto = extraer_texto(ruta_imagen)
-
-    if not texto:
+    if not texto or not texto.strip():
         return {"estado": "error", "mensaje": "No se pudo leer la imagen"}
 
-    print(f"\n📄 Texto extraído:\n{'-'*40}\n{texto.strip()}\n{'-'*40}")
+    alumnos = cargar_alumnos()
 
     fecha   = parsear_fecha(texto)
     monto   = parsear_monto(texto)
@@ -189,6 +160,7 @@ def analizar_comprobante(ruta_imagen):
 
     resultado = {
         "alumno":    alumno["nombre"] if alumno else None,
+        
         "fecha":     fecha,
         "monto":     monto,
         "semanas":   semanas,
@@ -199,26 +171,3 @@ def analizar_comprobante(ruta_imagen):
 
     return resultado
 
-# ─────────────────────────────────────────────
-#  PRUEBA RÁPIDA — python vaxis_pagos.py imagen.jpg
-# ─────────────────────────────────────────────
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) < 2:
-        print("Uso: python vaxis_pagos.py <ruta_imagen>")
-        print("Ejemplo: python vaxis_pagos.py imagen1.jpeg")
-        sys.exit(1)
-
-    ruta = sys.argv[1]
-    print(f"🔍 Analizando: {ruta}")
-    resultado = analizar_comprobante(ruta)
-
-    print(f"\n📊 RESULTADO:")
-    print(f"   Alumno:    {resultado.get('alumno') or '❌ No encontrado'}")
-    print(f"   Fecha:     {resultado.get('fecha')  or '❌ No encontrada'}")
-    print(f"   Monto:     ${resultado.get('monto') or '❌ No encontrado'}")
-    print(f"   Semanas:   {resultado.get('semanas') or '❌ No determinado'}")
-    print(f"   Tarjeta:   {'****' + resultado['digitos'] if resultado.get('digitos') else 'No disponible'}")
-    print(f"   Confianza: {resultado.get('confianza')}%")
-    print(f"   Estado:    {'✅ Validado' if resultado.get('estado') == 'validado' else '⚠️  Pendiente de revisión'}")
